@@ -18,6 +18,7 @@ The statements below are high-confidence for the provided PSP NG sample:
 - version `0x00000100`
 - entry size `0x50`
 - sector alignment `0x800`
+- hierarchical child-pool alignment is not globally fixed across all checked nested KPDs
 
 Other KPD variants may exist and should be rechecked separately.
 
@@ -89,6 +90,10 @@ Alignment facts:
 - all observed stored offsets are `0x800` aligned
 - all observed directory sizes are `0x800` aligned
 - file sizes are not generally `0x800` aligned
+
+These three alignment facts hold for the outer `psp_ng_DATAPACK.KPD` sample.
+
+Checked nested hierarchical KPDs can use smaller child-pool spacing and smaller stored offsets, commonly `0x10` aligned rather than `0x800` aligned.
 
 ## Index Organization
 
@@ -179,6 +184,39 @@ Observed working sub-bases:
 - `root/staffroll/bin` -> `staffroll_00.bin` at `0xFDAB000`
 - `root/staffroll/msg` -> `msg_staffroll*.mwm` at `0xFDAF000`
 
+## Hierarchical Child-Pool Alignment
+
+Hierarchical KPDs do not all space sibling child pools with the same alignment.
+
+For the checked sample set, the working rule is:
+
+- compute child-pool spans from the node contents
+- sequence sibling child pools using a child-pool alignment that matches the archive header's `data_size`
+
+Observed working child-pool alignments:
+
+- `0x800`: outer `psp_ng_DATAPACK.KPD`, plus checked nested archives such as `submission13.kpd` through `submission66.kpd`
+- `0x10`: checked nested hierarchical archives such as `menu.kpd`, `staffroll.kpd`, `ndch.kpd`, `dance.kpd`, `mapcommon.kpd`, `first_read_00.kpd`, checked `battleevent/*.kpd`, checked `st09_*.kpd`, and checked `tansaku_00_st*.kpd`
+
+For the four main previously suspicious nested archives:
+
+| Archive | Working child-pool alignment | Result |
+| --- | --- | --- |
+| `menu.kpd` | `0x10` | `msg_mainmenu_00.mwm`, `msg_missionmenu_00.mwm`, and `msg_talent_00.mwm` start at `MWMS` |
+| `staffroll.kpd` | `0x10` | `msg_staffroll*.mwm` and nested `staffroll_00.bin` start at their expected headers |
+| `ndch.kpd` | `0x10` | `fl001.gmo`, `fl002.gmo`, `msg_ndchdialog*.mwm`, `nendochi.pbd`, and `nendochi.phd` start at expected headers |
+| `dance.kpd` | `0x10` | `da000.gmo`, `da001.gmo`, `da002.gmo`, `msg_*.mwm`, `dance.pbd`, and `dance.phd` start at expected headers |
+
+Practical consequence:
+
+- late embedded `MWMS` or `OMG.00.1PSP` headers inside extracted nested files are not, by themselves, evidence that the file format is layered or that an extra normalization pass is required
+- in the checked `menu`, `staffroll`, `ndch`, `dance`, `mapcommon`, and `first_read_00` cases, those late headers were caused by using the wrong child-pool alignment
+
+This alignment rule also explains the reviewed `FailedFiles` set cleanly:
+
+- `202` flagged review files were checked against the corrected model
+- `0` remained unresolved as KPD offset-model problems
+
 ## Tree and Path Observations
 
 Observed path facts:
@@ -213,8 +251,9 @@ Observed `.bin` families:
 
 - `STFR`: top-level `staffroll_00.bin`
 - `MOTC`: nested `eventmotionconvtable_00.bin` and `eventseconvtable_00.bin` inside `tansaku_00_st02.kpd`
+- additional `0x14`-header `.bin` families inside `first_read_00.kpd`
 
-Shared observed prefix across both families:
+Shared observed prefix across the checked magic-bearing `.bin` families:
 
 | Offset | Type | Observed value |
 | --- | --- | --- |
@@ -372,6 +411,38 @@ Checked body patterns:
 This makes `MOTC` look like a small fixed-length word-table format rather than generic packed binary.
 
 So far, `.bin` is best treated as a family of magic-bearing table formats rather than a single generic container.
+
+### Additional `0x14`-Header `.bin` Families
+
+Corrected extraction of nested `first_read_00.kpd` reveals a broader family of structured `.bin` files.
+
+Across `52/52` checked `.bin` files in that archive:
+
+- bytes `0x04-0x07` are `0x00000100`
+- bytes `0x08-0x0B` are `0x14`
+- bytes `0x00-0x03` are four ASCII uppercase/digit/underscore characters
+
+Observed example magics:
+
+- `BGMC`
+- `CHRT`
+- `ENMY`
+- `EQST`
+- `BVFT`
+- `ASKL`
+
+Observed example headers:
+
+| File | Magic | `u32@0x0C` | `u32@0x10` |
+| --- | --- | --- | --- |
+| `bgm_00.bin` | `BGMC` | `0x21` | `0x2C` |
+| `character_00.bin` | `CHRT` | `0x16` | `0x128` |
+| `enemy_00.bin` | `ENMY` | `0x2D7` | `0x114` |
+| `equipset_00.bin` | `EQST` | `0x13E` | `0x1C` |
+| `battlevoice_00.bin` | `BVFT` | `0x1D` | `0x10` |
+| `attackergun_00.bin` | `ASKL` | `0x4` | `0xB0` |
+
+The field semantics are not yet pinned down, but these files are clearly part of the same broad `magic + 0x100 + 0x14` binary-table family rather than generic opaque blobs.
 
 ## DAT Format Observations
 
@@ -1368,6 +1439,9 @@ A parser or extractor for this archive family should:
 4. trust stored file size first
 5. support split pools such as `staffroll`
 6. allow for nodes that may contain both child pools and direct files
+7. for hierarchical KPDs, choose child-pool spacing from the archive's own `data_size` fit rather than assuming `0x800`
+8. support at least two checked child-pool alignments: `0x800` and `0x10`
+9. expect many nested archives to resolve correctly at raw file offset `0` once the correct child-pool alignment is used
 
 ## Remaining Open Items
 
