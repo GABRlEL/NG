@@ -1408,6 +1408,255 @@ Observed common header pattern:
 | `0x2C` | `u32` | `0x18` in `710/710` |
 | `0x30` | `char[8]` | `model-0\\0` in `710/710` |
 
+### Chunked GMO container model
+
+Checked sample `.gmo` files fit a chunked container model rather than one flat struct.
+
+The chunk header model used by the reviewed 3ds Max GMO importer matches the checked samples:
+
+| Offset | Type | Meaning |
+| --- | --- | --- |
+| `+0x00` | `u16` | `chunk_id` |
+| `+0x02` | `u16` | `args_offs` |
+| `+0x04` | `u32` | `next_offs` |
+| `+0x08` | `u32` | `child_offs` for full chunks |
+| `+0x0C` | `u32` | `data_offs` for full chunks |
+| `+0x10` | bytes | optional fixed-length ASCII name area for full chunks |
+
+Observed chunk rules:
+
+- the high bit `0x8000` in `chunk_id` marks a half-chunk
+- half-chunks use only the first `0x08` bytes of header and then inline payload
+- full chunks have the larger header shown above
+- in the checked full chunks, `child_offs` and `data_offs` are equal
+- `next_offs` is the total chunk span from chunk start to the next sibling
+- child parsing for checked full container chunks begins at `start + args_offs`
+
+Observed top-level chunk pattern:
+
+- at `0x10`: full chunk `chunk_id = 0x0002` (`FILE`), `args_offs = 0x10`, `next_offs = file_size - 0x10`
+- at `0x20`: full chunk `chunk_id = 0x0003` (`MODEL`), `args_offs = 0x18`, `next_offs = file_size - 0x20`, name `model-0`
+
+Sample-backed examples:
+
+- `u0090.gmo`
+  - `0x10`: `FILE`
+  - `0x20`: `MODEL "model-0"`
+  - later named `BONE` chunks such as `root`, `waist`, and `body`
+  - later `PART`, `MATERIAL`, and `TEXTURE` chunks
+- `op_body_mot.gmo`
+  - `0x58`: `MOTION "motion-0"`
+  - `0x390`: second `MOTION "motion-0-0000"`
+- `cam.gmo`
+  - `0x78`: `BONE "Camera01"`
+
+Observed chunk labels confirmed by the reviewed MaxScript parser:
+
+- full/container-side:
+  - `0x0002 FILE`
+  - `0x0003 MODEL`
+  - `0x0004 BONE`
+  - `0x0005 PART`
+  - `0x0006 MESH`
+  - `0x0007 ARRAYS`
+  - `0x0008 MATERIAL`
+  - `0x0009 LAYER`
+  - `0x000A TEXTURE`
+  - `0x000B MOTION`
+  - `0x000C FCURVE`
+- half/leaf-side:
+  - `0x0012 FILE_NAME`
+  - `0x0013 FILE_IMAGE`
+  - `0x0014 BOUNDING_BOX`
+  - `0x0015 ARRAY_OFFSET`
+  - `0x0041 PARENT_BONE`
+  - `0x0044 BLEND_BONES`
+  - `0x0045 BLEND_OFFSETS`
+  - `0x0048 TRANSLATE`
+  - `0x0049 ROTATE_ZYX`
+  - `0x004A ROTATE_YXZ`
+  - `0x004B ROTATE_Q`
+  - `0x004C SCALE`
+  - `0x004E DRAW_PART`
+  - `0x0061 SET_MATERIAL`
+  - `0x0062 BLEND_SUBSET`
+  - `0x0066 DRAW_ARRAYS`
+  - `0x0091 SET_TEXTURE`
+  - `0x0092 MAP_TYPE`
+  - `0x0093 MAP_FACTOR`
+  - `0x0094 BLEND_FUNC`
+  - `0x0095 TEX_FUNC`
+  - `0x0096 TEX_FILTER`
+  - `0x0097 TEX_WRAP`
+  - `0x0098 TEX_CROP`
+  - `0x0099 TEX_GEN`
+  - `0x009A TEX_MATRIX`
+  - `0x00B1 FRAME_LOOP`
+  - `0x00B2 FRAME_RATE`
+  - `0x00B3 ANIMATE`
+
+### Mesh-bearing versus helper/motion GMO families
+
+The checked working comparison files:
+
+- `b0090.gmo`
+- `f0090.gmo`
+- `h0090.gmo`
+- `u0090.gmo`
+
+all contain the same mesh/material/image-side chunk families and marker strings:
+
+- chunk families observed in this set:
+  - `PART`
+  - `MESH`
+  - `ARRAYS`
+  - `MATERIAL`
+  - `LAYER`
+  - `TEXTURE`
+  - `FILE_NAME`
+  - `FILE_IMAGE`
+  - `BOUNDING_BOX`
+  - `BLEND_BONES`
+  - `BLEND_OFFSETS`
+  - `DRAW_PART`
+  - `SET_MATERIAL`
+  - `DRAW_ARRAYS`
+  - `SET_TEXTURE`
+- strings observed in this set:
+  - `mesh-0`
+  - `arrays-0`
+  - `layer-0`
+  - `MIG.00.1PSP`
+
+By contrast, the `9` unique GMO payloads in the checked `v2FailedFiles` review set contain none of those mesh/material/image chunk families and none of those marker strings.
+
+Observed split of those `9` unique failed-payload families:
+
+- `45` files: bare-shell GMOs
+  - repeated `eventmotionset.gmo`
+  - repeated `st09_f00*_01.gmo`
+- `49` files: effect/helper GMOs
+  - repeated `nu001.gmo`
+  - repeated `nu004.gmo`
+  - repeated `nu008.gmo`
+- `1` file: camera/helper GMO
+  - `cam.gmo`
+- `1` file: locator/helper GMO
+  - `w0000.gmo`
+- `2` files: motion-only GMOs
+  - `op_body_mot.gmo`
+  - `op_face_mot.gmo`
+
+The motion-only pair is structurally distinct from the mesh-bearing comparison files:
+
+- it contains motion-side chunk families such as `MOTION`, `FCURVE`, `FRAME_LOOP`, `FRAME_RATE`, and `ANIMATE`
+- it contains `motion-0` and `fcurve-*`
+- it does not contain the mesh/material/image markers listed above
+
+This supports a narrower interpretation for the checked sample:
+
+- GMO files that fail to convert in Noesis are not necessarily truncated KPD extracts
+- in the checked `v2FailedFiles` set, they are often shallow helper, camera, locator, effect, or motion variants rather than ordinary standalone mesh-bearing model files
+
+### `ARRAYS` payload observations
+
+Checked mesh-bearing `.gmo` files expose a stable `ARRAYS` leaf payload header:
+
+| Offset | Type | Meaning |
+| --- | --- | --- |
+| `+0x00` | `u32` | `vertex_type` bitfield |
+| `+0x04` | `u32` | `verts_count` |
+| `+0x08` | `u32` | `morphs_count` |
+| `+0x0C` | `u32` | `format2` |
+
+The reviewed MaxScript importer and checked sample files support the following `vertex_type` bit groups:
+
+- `0x0003`: texture coordinate storage
+  - `0x0001 UBYTE`
+  - `0x0002 USHORT`
+  - `0x0003 FLOAT`
+- `0x001C`: packed color storage
+  - `0x0010 PF5650`
+  - `0x0014 PF5551`
+  - `0x0018 PF4444`
+  - `0x001C PF8888`
+- `0x0060`: normal storage
+  - `0x0020 BYTE`
+  - `0x0040 SHORT`
+  - `0x0060 FLOAT`
+- `0x0180`: position storage
+  - `0x0080 BYTE`
+  - `0x0100 SHORT`
+  - `0x0180 FLOAT`
+- `0x0600`: weight storage
+  - `0x0200 UBYTE`
+  - `0x0400 USHORT`
+  - `0x0600 FLOAT`
+- `0x04000` through `0x1C000`: weight-count flags selecting `2` through `8` weights
+- `0x02000000`: additional observed flag, semantics still unclear
+
+Observed checked examples:
+
+- `b0090.gmo` includes both weighted and unweighted `ARRAYS` leaves
+- sample weighted layouts decode as `UBYTE` texture coordinates, `SHORT` positions, and `UBYTE x7` weights
+- sample unweighted layouts decode as `UBYTE` texture coordinates and `SHORT` positions with no weight payload
+
+For checked mesh-bearing samples, the importer-backed stride estimate from `vertex_type` and `format2` matches the observed payload size.
+
+### `DRAW_ARRAYS` payload observations
+
+Checked `DRAW_ARRAYS` leaves fit this payload structure:
+
+| Offset | Type | Meaning |
+| --- | --- | --- |
+| `+0x00` | `u8[4]` | arrays reference tuple: `index`, `level`, `type`, `reserved` |
+| `+0x04` | `u32` | draw mode |
+| `+0x08` | `u32` | `vertex_count` |
+| `+0x0C` | `u32` | `primitive_count` |
+
+Observed rule:
+
+- if draw mode has bit `0x0100` set, the checked sample files behave like sequential draws and the next `u16` acts as an index seed
+
+Observed checked mesh-bearing modes:
+
+- `0x00000103`
+- `0x00000104`
+
+Those sequential draws are common throughout the checked comparison files.
+
+### `MOTION`, `ANIMATE`, and `FCURVE` payload observations
+
+Checked motion-only `.gmo` files such as `op_body_mot.gmo` and `op_face_mot.gmo` fit a stable motion-side structure:
+
+- `MOTION` container chunks hold `FRAME_LOOP`, `FRAME_RATE`, `ANIMATE`, and `FCURVE`
+- checked `FRAME_LOOP` leaves decode as two floats
+  - sample value: `0.0 -> 60.0`
+- checked `FRAME_RATE` leaves decode as one float
+  - sample value: `30.0`
+- checked `ANIMATE` leaves decode as:
+  - `u32 block`
+  - `u32 type`
+  - `u32 index`
+  - `u32 fcurve`
+- checked `ANIMATE` type values in the motion-only pair point to transform chunk types such as `TRANSLATE`, `ROTATE_Q`, and `SCALE`
+- checked `FCURVE` leaves decode as:
+  - `u32 type`
+  - `u32 value_count`
+  - `u32 frame_count`
+  - reserved `u32`
+  - frame records after that
+
+In the checked motion-only pair, `FCURVE` uses the float16 form indicated by bit `0x80` in `type`, with both `3`-value and `4`-value curves present.
+
+### `FILE_IMAGE` payload observations
+
+Checked mesh-bearing `.gmo` files use `FILE_IMAGE` leaves as embedded image carriers:
+
+- payload begins with `u32 data_size`
+- image/blob data follows immediately after that field
+- in the checked mesh-bearing comparison set, embedded image signatures include `MIG.00.1PSP`
+
 Small GMO files are normal in this sample. For example:
 
 - `cam.gmo`: `0xD4`
