@@ -6,3 +6,5 @@ v2 is the current version supporting nested kpds
 reference doc is frequently updated based on new discoveries
 
 gmo folder has separate gmo research based on https://github.com/ShrineFox/P4GMOdelConverter and https://drive.autodesk.com/de29160e9/shares/SH35dfcQT936092f0e436a2cd211144bb447
+
+chatgpt/codex 5.3 & 5.4 xhigh owns me and all
