@@ -71,7 +71,7 @@ Each entry record is `0x50` bytes.
 | `0x04` | `u32` | always `0` in this sample |
 | `0x08` | `u64` | stored offset |
 | `0x10` | `u64` | stored size |
-| `0x18` | `u16` | `0xFFFF` in this sample |
+| `0x18` | `u16` | entry-local marker or metadata field; exact meaning unresolved |
 | `0x1A` | `char[0x36]` | ASCII name/path, NUL-padded |
 
 Observed entry types:
@@ -85,6 +85,14 @@ Observed name behavior:
 - names may be plain basenames such as `emotion.ana`
 - names may also contain slashes such as `battleevent/00_00_000_01_p00pack.kpd`
 
+Observed `u16@0x18` behavior in the outer sample:
+
+- `2408/4573` parsed entries use `0xFFFF`
+- `2165/4573` parsed entries use other values
+- valid file entries are not restricted to `0xFFFF` here
+- this field should not be used as the sole validity check for a `0x50` entry
+- exact semantics are still unresolved
+
 Alignment facts:
 
 - all observed stored offsets are `0x800` aligned
@@ -97,23 +105,22 @@ Checked nested hierarchical KPDs can use smaller child-pool spacing and smaller 
 
 ## Index Organization
 
-The sample index is fragmented into many short runs of contiguous `0x50`-byte entries.
+The sample index is organized as contiguous runs of `0x50`-byte entries.
 
 Confirmed properties:
 
 - each entry begins on a `0x10` boundary
 - contiguous entries form runs
 - the root run begins at `0x1000`
+- valid runs can contain a mix of entries whose `u16@0x18` field is `0xFFFF` and entries whose `u16@0x18` field is not
 
 Observed counts in this sample:
 
 - directory entries: `39`
-- file entries: `2369`
-- total entries: `2408`
-- total runs before the data area: `439`
-- singleton runs: `189`
-
-Singleton runs are normal metadata, not noise.
+- file entries: `4534`
+- total entries: `4573`
+- total runs before the data area: `23`
+- singleton runs: `7`
 
 ## Root Table and Metadata Pools
 
@@ -129,9 +136,11 @@ In this sample, the root table is best understood as a table of metadata pools o
 
 Practical consequences:
 
-- root entry names are not a direct visible path tree
-- visible path prefixes do not always correspond to root buckets
-- for example, many `battleevent/*.kpd` and `script/*.kpd` files live inside the `pkdata` pool
+- root entry names are not, by themselves, a direct extracted file tree
+- some root entries are data-bearing pools such as `ana`, `battle`, `char`, `mapdata`, `pkdata`, and `voice`
+- some root entries are structural placeholders or routing labels with no direct files in the checked sample
+- visible path prefixes do not always correspond one-to-one to data-bearing root pools
+- for example, many `battleevent/*.kpd`, `script/*.kpd`, and related nested archives live inside the `pkdata` pool even though `battleevent` and `script` also appear as root-table names
 
 ## Data-Pool Resolution
 
@@ -148,22 +157,22 @@ When the correct pool base is used, stored offsets land directly on valid file h
 | Pool | Metadata Range | Verified Data Base | Files |
 | --- | --- | --- | --- |
 | `ana` | `0x2800-0x3800` | `0x76800` | `7` |
-| `battle` | `0x3800-0xB800` | `0x110800` | `322` |
+| `battle` | `0x3800-0xB800` | `0x110800` | `361` |
 | `bgm` | `0xC000-0xD800` | `0x76F800` | `27` |
 | `cam` | `0xD800-0xE800` | `0x195E800` | `1` |
-| `char` | `0xE800-0x22800` | `0x195F000` | `713` |
+| `char` | `0xE800-0x22800` | `0x195F000` | `987` |
 | `chardata` | `0x22800-0x23800` | `0x35D1000` | `4` |
 | `dance` | `0x23800-0x24800` | `0x35D5800` | `21` |
 | `dlc` | `0x25000-0x27000` | `0x37C3000` | `1` file plus `1` nested dir |
 | `im` | `0x28000-0x29000` | `0x37D9800` | `5` |
 | `install` | `0x29000-0x2A000` | `0x398C800` | `1` |
-| `mapdata` | `0x2B000-0x2D000` | `0x39B0000` | `65` |
+| `mapdata` | `0x2B000-0x2D000` | `0x39B0000` | `67` |
 | `menucommon` | `0x2D800-0x2E800` | `0x3B16000` | `1` |
 | `msg` | `0x2F000-0x31000` | `0x3B1F000` | `54` |
-| `pkdata` | `0x32000-0x3B800` | `0x3B3B800` | `349` |
+| `pkdata` | `0x32000-0x3B800` | `0x3B3B800` | `451` |
 | `save` | `0x3B800-0x3C800` | `0xFBC4000` | `8` |
 | `se` | `0x3D000-0x3E000` | `0xFC7B800` | `6` |
-| `voice` | `0x45000-0x77000` | `0xFDB5000` | `774` |
+| `voice` | `0x45000-0x77000` | `0xFDB5000` | `2522` |
 
 ### `voice`
 
@@ -171,7 +180,7 @@ The `voice` pool resolves cleanly with base `0xFDB5000`.
 
 With that base:
 
-- all `774` `voice` `.at3` files validate as `RIFF ... WAVEfmt `
+- all `2522` `voice` `.at3` files validate as `RIFF ... WAVEfmt `
 - the pool layout closes cleanly near the end of the archive
 
 ### `staffroll`
@@ -221,7 +230,7 @@ This alignment rule also explains the reviewed `FailedFiles` set cleanly:
 
 Observed path facts:
 
-- nested `.kpd` files are common: `349` confirmed entries
+- nested `.kpd` files are common: `451` confirmed entries
 - file paths may be stored directly in entry names
 - some top-level buckets are empty in practice, while other buckets contain many nested subtrees
 
@@ -231,16 +240,16 @@ These signatures were validated against the resolved physical offsets in the sam
 
 | Extension | Verified Count | Header |
 | --- | --- | --- |
-| `.ana` | `30/30` | `@ANA ` |
-| `.gmo` | `710/710` | `OMG.00.1PSP` |
-| `.gim` | `68/68` | `MIG.00.1PSP` |
-| `.at3` | `801/801` | `RIFF .... WAVEfmt ` |
-| `.lbn` | `69/69` | `1B 4C 75 61 51 00 01 04 04 04 08 00 00 00 00 00` |
+| `.ana` | `33/33` | `@ANA ` |
+| `.gmo` | `922/922` | `OMG.00.1PSP` |
+| `.gim` | `140/140` | `MIG.00.1PSP` |
+| `.at3` | `2549/2549` | `RIFF .... WAVEfmt ` |
+| `.lbn` | `87/87` | `1B 4C 75 61 51 00 01 04 04 04 08 00 00 00 00 00` |
 | `.mwm` | `65/65` | `MWMS 00 00 01 00 14 00 00 00` |
 | `.png` | `8/8` | standard PNG header |
 | `.phd` | `4/4` | `PPHD8 00 00 00 00 00 01 00` |
-| `.kpd` | `349/349` | `DPLK 00 01 00 00` |
-| `.efa` | `31/31` | `45 46 41 00` (`EFA\\0`) |
+| `.kpd` | `451/451` | `DPLK 00 01 00 00` |
+| `.efa` | `33/33` | `45 46 41 00` (`EFA\\0`) |
 | `.bin` | `1/1` | `53 54 46 52 00 00 01 00 14 00 00 00` (`STFR`) |
 
 ## BIN Format Observations
@@ -369,9 +378,72 @@ Separate observed file:
 
 Other repeated field behavior:
 
-- most records use `240.0` at record offset `+0x1C`
-- ten near-terminal records in section `6` use `16.0` at record offset `+0x1C`, `0` at record offset `+0x20`, and group `3` at record offset `+0x24`
-- most records use `1` at record offset `+0x20`
+- record offset `+0x24` behaves like a layout/style group rather than a free integer
+- record offsets `+0x1C` and `+0x20` behave like a paired anchor/alignment setting
+- record offset `+0x18` behaves like a spacing/timing scalar rather than a simple enum
+
+Observed `+0x24` layout/style groups:
+
+| `+0x24` | Count | Observed role |
+| --- | --- | --- |
+| `3` | `10` | left-aligned copyright/legal block in late section `6` |
+| `4` | `124` | mid-level labels: role titles, character names, subsection headings |
+| `5` | `19` | title-card lines: work names and major section-title cards |
+| `6` | `13` | top-level headers such as `キャスト`, `開発スタッフ`, and `協力` |
+| `7` | `194` | ordinary body lines: person names, company names, performer credits |
+| `8` | `3` | emphasized title-card lines such as song titles and the final `Produced by` card |
+
+Sample-backed examples:
+
+- group `6`
+  - `キャスト`
+  - `総合監修`
+  - `開発スタッフ`
+- group `5`
+  - `<魔法少女リリカルなのは　The MOVIE 1st>`
+  - `『東方Project』`
+  - `アニメーションスタッフ`
+- group `4`
+  - `高町　なのは`
+  - `作詞`
+  - `メインプログラム`
+- group `7`
+  - `田村　ゆかり`
+  - `ClariS`
+  - `株式会社　白組`
+- group `8`
+  - `『アナタニFIT』`
+  - `『NEN・DO・ROIDO』`
+  - final `Produced by` card
+
+Observed `+0x1C` / `+0x20` anchor pair:
+
+- `354/364` records use `+0x1C = 240.0` and `+0x20 = 1`
+- `10/364` records use `+0x1C = 16.0` and `+0x20 = 0`
+- those ten exceptional rows are the late section-`6` copyright/legal lines beginning with `[CODE SYS_CC]`
+- because PSP screen width is `480`, the dominant value `240.0` strongly suggests a centered horizontal anchor, while `16.0` strongly suggests a left margin
+
+Observed `+0x18` spacing/timing behavior:
+
+- observed values are `0.0`, `8.0`, `16.0`, `32.0`, `48.0`, `64.0`, `128.0`, and `312.0`
+- `8.0` is the dominant ordinary body-line value (`192` rows)
+- `0.0` appears only on tightly packed continuation rows, such as follow-on character names in section `1`
+- `48.0` appears on a small set of larger subsection headings in section `4`, such as `メインプログラム`, `デザイン`, `サウンド`, `デバッグスタッフ`, and `スーパーバイザー`
+- `128.0` appears on section-opening emphasis cards such as `アニメーションスタッフ` and `オープニング曲`
+- `312.0` appears only on the final `Produced by` card
+
+This pattern makes `+0x18` look much more like a spacing, delay, or hold-duration field than like a categorical style ID.
+
+Observed sentinel/control row:
+
+- record `71`, placed between sections `0` and `1`, is the only row with:
+  - `+0x08 = 1`
+  - `+0x0C = 0xFFFFFFFF`
+  - `+0x10 = 0xFFFFFFFF`
+  - `+0x14 = 0`
+  - `+0x24 = 0xFFFFFFFF`
+- this row is structurally unlike all normal text rows and is best understood as a control delimiter inside the sequence rather than a visible credit line
+- `msg_staffroll_system_00.mwm` still exists as a separate one-entry `MWMS` file, but a direct field-level link from that file to the sentinel row is still unproven
 
 This suggests `STFR` is an ordered layout table with sectioned entries rather than a free-form binary blob.
 
@@ -1674,15 +1746,280 @@ These small files are internally consistent:
 All `30` sample `.ana` files:
 
 - begin with `@ANA `
-- contain at least one embedded `@ANT` block
+- contain at least one embedded `MIG.00.1PSP` image resource
+- contain at least one embedded `@ANT` animation block
 
 An embedded `@ANT` marker near the end of an `.ana` file is therefore not, by itself, evidence of truncation.
+
+### Outer ANA container
+
+All `30` checked `.ana` files fit the same outer container model:
+
+- `u32@0x20` is an image count
+- `u32@0x20` matches the number of embedded `MIG.00.1PSP` resources in all `30/30` checked files
+- after the count, there are `12` zero bytes
+- then follow `image_count` image entries of `0x10` bytes each:
+  - `u32 image_start`
+  - `u32 image_end`
+  - `char[8] image_name`
+- after the image data, there is a later animation directory
+- the animation directory begins with:
+  - `u32 animation_count`
+  - `12` zero bytes
+- then follow `animation_count` animation entries of `0x18` bytes each:
+  - `u32 payload_start`
+  - `u32 payload_size`
+  - `char[8] animation_name`
+  - `u32 zero`
+  - `u32 animation_index`
+
+Across all `30` checked files:
+
+- `animation_count` matches the number of embedded `@ANT` blocks
+- this was verified across `70` checked animation payloads total
+
+Sample-backed examples:
+
+- `en_logo.ana`
+  - `1` image resource named `nendoro`
+  - `1` animation payload named `en_logo`
+- `emotion.ana`
+  - `3` image resources
+  - `20` animation payloads named `ei000` through `ei019`
+- `im_image.ana`
+  - `13` image resources
+  - `13` animation payloads
+
+### Animation payload preamble
+
+Each checked animation payload begins with a `0x20`-byte preamble before `@ANT`.
+
+Observed preamble structure:
+
+- `u32 referenced_image_count`
+- `referenced_image_count` `u32` image indices
+- zero padding to `0x20` bytes
+
+Examples:
+
+- `en_logo.ana` animation payload preamble: `1, 0`
+- `emotion.ana` payloads: `3, 0, 1, 2`
+- `ana/bt_chain.ana`
+  - one payload references image indices `0, 1, 2, 3`
+  - the other references image indices `4, 5, 6`
+- `im_image.ana`
+  - each payload references exactly one image index
+
+The first `u32` in the following `@ANT` header matches `referenced_image_count`, not the total image count of the whole `.ana` file.
+
+### `@ANT` structure
+
+All `70` checked animation payloads fit the same `@ANT` model.
+
+Observed header layout:
+
+| Relative Offset | Type | Meaning |
+| --- | --- | --- |
+| `0x00` | `char[4]` | `@ANT` |
+| `0x04` | `u32` | referenced image count |
+| `0x08` | `u32` | total grouped-index count |
+| `0x0C` | `u32` | grouped-list count |
+| `0x10` | `u32` | descriptor count |
+| `0x14` | `u32` | always `0x20` in checked samples |
+| `0x18` | `u32` | first internal table offset |
+| `0x1C` | `u32` | second internal table offset |
+
+#### First internal table
+
+The first internal table begins at `@ANT + off1`.
+
+Its structure is:
+
+- `u32[grouped_list_count]` offsets
+- followed by `grouped_list_count` concatenated `u32` lists
+- each list is terminated by `0xFFFFFFFF`
+
+The initial offset array points back into the same table:
+
+- in all checked payloads, the first offset points exactly to the first list immediately after the offset array
+- later offsets point to the starts of later terminated lists
+
+Verified invariant across all `70` checked animation payloads:
+
+- the total number of non-terminator `u32` values across all lists equals `u32@0x08` in the `@ANT` header
+
+Examples:
+
+- `en_logo.ana`
+  - `grouped_list_count = 1`
+  - one list: `0, 0xFFFFFFFF`
+- `encount_02.ana`
+  - `grouped_list_count = 9`
+  - `9` lists of `13` indices each
+- `encount_00.ana`
+  - `grouped_list_count = 42`
+  - list lengths `1, 1, 2, 3, ... , 41`
+
+#### Second internal table
+
+The second internal table begins at `@ANT + off2`.
+
+It starts with `descriptor_count` descriptors of `0x10` bytes each:
+
+- `u32 data_offset`
+- `u32 record_count`
+- `f32 total_time_or_duration`
+- `u32 flags`
+
+For all checked payloads:
+
+- `data_offset` is relative to the start of the same `@ANT` block
+- descriptor data blocks are laid out contiguously
+- the span from one descriptor's `data_offset` to the next equals `record_count * 0x10`
+
+Each descriptor's data block is a sequence of `0x10` records:
+
+- `u32 mode`
+- `f32 value`
+- `f32 start_time`
+- `f32 end_time`
+
+These records behave like piecewise timeline segments:
+
+- simple static cases such as `en_logo.ana` use one descriptor with one record: `(mode=0, value=0.0, start=0.0, end=1.0)`
+- larger cases such as `encount_00.ana` use repeated per-step segments
+- multi-image cases such as `emotion.ana` use multiple descriptors with different `record_count`, `duration`, and `flags` values
+
+Only two `mode` values were observed in the checked sample:
+
+- `mode = 0`
+- `mode = 1`
+
+Across all `1913` checked `mode = 0` records:
+
+- `value` is always an integer-like selector in the range `0 <= value < grouped_list_count`
+
+Across all `1005` checked `mode = 1` records:
+
+- `1003/1005` satisfy `value = end_time - start_time` exactly
+- the remaining `2` outliers are both in `ana/bt_st_text.ana`
+
+So, in the checked sample:
+
+- `mode = 0` acts like a selector keyframe or selector hold row
+- `mode = 1` acts like a timed spacer or duration row rather than another selector row
+
+### Current semantic mapping
+
+The first internal table is more constrained than a generic pointer structure.
+
+Across all `70` checked animation payloads:
+
+- the concatenated non-terminator values across all grouped lists are exactly `0, 1, 2, ... , u32@0x08 - 1`
+- the grouped lists therefore partition one flat item pool rather than storing arbitrary unrelated indices
+
+This gives the current working interpretation:
+
+- the first internal table defines grouped item sets
+- `mode = 0` records in the second internal table select among those grouped sets over time
+
+The exact meaning of the flat item pool is still unresolved, but in the checked UI-heavy samples it behaves more like grouped draw-part or sprite-state IDs than generic scalars.
+
+Examples:
+
+- `im_image.ana`
+  - one referenced image
+  - one grouped list containing `18` flat item IDs
+  - one static selector record choosing grouped list `0`
+- `ana/bt_chain.ana`, animation `bt_pre_`
+  - three referenced images
+  - nine singleton grouped lists
+  - three descriptors stepping through selector triplets `0 -> 1 -> 2`, `3 -> 4 -> 5`, and `6 -> 7 -> 8`
+- `text_win.ana`, first `text_wi` payload
+  - the early descriptor sequence falls into repeated three-channel clusters
+  - in each cluster, one channel advances through selector IDs, one channel mirrors or reverses that selector pattern, and one channel holds the terminal selector
+  - this strongly suggests grouped UI-state behavior rather than unrelated numeric curves
+
+### Descriptor flags
+
+The exact flag bit semantics are still unresolved, but some sample-backed rules are already clear.
+
+Observed low-word families:
+
+- `0x0000`: default descriptor flag
+- `0x0001`: selector channel family
+- `0x0002`: selector channel family with a non-zero high word
+
+Sample-backed observations:
+
+- all checked `...0002` descriptors are selector channels in the current sample
+- `0x0001` descriptors also behave as selector channels, often with mirrored or ping-pong-like selector sequences
+- `0x0000` is the default flag and can represent:
+  - selector channels
+  - empty placeholder descriptors
+
+Empty descriptors are normal:
+
+- `48` checked descriptors have `record_count = 0`, `total_time = 0`, and `flags = 0`
+- examples include:
+  - one empty descriptor in every checked `emotion.ana` payload
+  - `8` empty descriptors in `ana/bt_main.ana` animation `bt_comm`
+  - `15` empty descriptors in `im_command.ana`
+
+The high word used by `...0002` descriptors is patterned but not yet securely decoded.
+
+### Recurring channel templates
+
+Several checked `.ana` families reuse stable descriptor layouts.
+
+These repeated templates are stronger than any current guess about the unresolved high word in `...0002` flags.
+
+Sample-backed recurring patterns:
+
+- `emotion.ana`
+  - all `20` checked payloads use the same four-channel skeleton:
+    - one `0x00010002` selector head
+    - one `0x00000001` selector channel
+    - one `0x00000000` selector channel
+    - one empty `0x00000000` placeholder descriptor
+  - what varies between payloads is mainly the selector sequence length in the `0x00000001` channel
+- `ana/bt_chain.ana`, animation `bt_chai`
+  - early channels repeat a three-descriptor selector motif:
+    - one `...0002` selector head
+    - one `0x00000001` selector channel
+    - one `0x00000000` selector channel
+  - later channels fall back to plain `0x00000000` selector rows
+- `text_win.ana`, first `text_wi` payload
+  - after two leading selector channels, the remaining active part is organized into repeated three-descriptor groups:
+    - one `...0002` selector head
+    - one `0x00000000` selector channel that mirrors or reverses the same selector band
+    - one `0x00000000` selector channel that holds a terminal selector
+- `ana/bt_main.ana`, animation `bt_st_i`
+  - the checked payload is built almost entirely from plain `0x00000000` selector pairs
+  - the paired channels repeatedly alternate forward and reverse selector sequences such as `8 -> 9` and `9 -> 8`
+
+So, at the current level of certainty:
+
+- ANA animation payloads are not just one flat list of selector curves
+- they are built from small recurring channel templates
+- those templates differ by asset family, especially between simple single-image payloads and larger UI-heavy payloads
+
+Verified invariant across all `70` checked animation payloads:
+
+- the animation payload end from the outer ANA animation directory matches exactly:
+  - `@ANT start + last_descriptor.data_offset + last_descriptor.record_count * 0x10`
+
+For the staffroll linkage specifically:
+
+- `en_logo.ana` contains one image resource and one animation resource only
+- there is no sample-backed sign of seven parallel ANA title cards matching the seven numbered `STFR` sections
+- the current best interpretation is that `en_logo.ana` is a single auxiliary staffroll graphic/animation rather than a per-section title bank
 
 ## Parser Rules That Fit This Sample
 
 A parser or extractor for this archive family should:
 
-1. parse all valid `0x50` entries, including singleton runs
+1. parse all valid `0x50` entries, including singleton runs and entries whose `u16@0x18` field is not `0xFFFF`
 2. treat the root table as storage-pool metadata rather than a direct file table
 3. resolve file locations with `physical_offset = pool_base + offset_stored`
 4. trust stored file size first
@@ -1697,6 +2034,7 @@ A parser or extractor for this archive family should:
 - the exact role of the structured block at `0x0800-0x0FFF`
 - the exact role of the metadata between `0x1AF0` and `0x2800`
 - the exact meaning of header field `0x20`
+- the exact meaning of the entry field at `0x18`
 - the owner of the reserved gap before the `voice` pool
 - full routing rules for `staffroll` sub-pools
 - detailed field semantics for `STFR`, `MOTC`, `BTTK`, `.pbd`, and `COLS`
