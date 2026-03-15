@@ -226,6 +226,28 @@ This alignment rule also explains the reviewed `FailedFiles` set cleanly:
 - `202` flagged review files were checked against the corrected model
 - `0` remained unresolved as KPD offset-model problems
 
+## Flat-Versus-Hierarchical Auto Layout
+
+Not every nested KPD that contains many `type 0` entries should be treated as a real hierarchical child-pool archive.
+
+Checked counterexamples:
+
+- `script/main_scenario/ch04_nendoworld_main05.kpd`
+- `script/main_scenario/ch04_nendoworld_main09.kpd`
+- `script/normal/tansaku_00_st12.kpd`
+- `script/sub_mission/submission65.kpd`
+
+These files contain many directory-like entries, but the working sample-backed interpretation is still `flat`:
+
+- `flat` mode verifies the checked file signatures cleanly and preserves the expected output names
+- attempted hierarchical interpretation over-expands the computed span beyond the header `data_size`
+- the bad hierarchical interpretation also invents extra synthetic path prefixes such as `ch00_gakkou_main01/` or `tansaku_00_st00/` that do not belong in the expected extracted file set
+
+Practical consequence:
+
+- auto-layout selection should reject tentative hierarchical mode when it already produces a hierarchical span mismatch
+- in the checked sample set, a span-mismatching hierarchical build is stronger evidence for a semantically flat archive than for a new child-pool variant
+
 ## Tree and Path Observations
 
 Observed path facts:
@@ -2027,7 +2049,8 @@ A parser or extractor for this archive family should:
 6. allow for nodes that may contain both child pools and direct files
 7. for hierarchical KPDs, choose child-pool spacing from the archive's own `data_size` fit rather than assuming `0x800`
 8. support at least two checked child-pool alignments: `0x800` and `0x10`
-9. expect many nested archives to resolve correctly at raw file offset `0` once the correct child-pool alignment is used
+9. reject tentative hierarchical mode in auto-layout when it already produces a hierarchical span mismatch; some nested archives with many `type 0` entries still resolve correctly as `flat`
+10. expect many nested archives to resolve correctly at raw file offset `0` once the correct child-pool alignment is used
 
 ## Remaining Open Items
 
